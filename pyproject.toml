@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "meetingmind"
+version = "0.1.0"
+description = "Meeting transcripts to action items with owners and due dates, plus team analytics and SQL KPIs."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Hrutishaa Nanduti" }]
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+meetingmind = "meetingmind.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["meetingmind"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

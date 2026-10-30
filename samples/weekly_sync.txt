@@ -1,0 +1,10 @@
+[00:00:00] Priya: Morning everyone. Quick weekly sync on the onboarding dashboard. Where are we on the churn numbers?
+[00:00:09] Marcus: The query is done but the numbers look off for October. I'll rerun the cohort query with the fixed timezone by Friday.
+[00:00:21] Priya: Great. Dana, can you send the customer the updated CSV export spec?
+[00:00:27] Dana: Yes. I can also draft the FAQ for the support team by next week.
+[00:00:35] Marcus: One concern is the API rate limit. We keep hitting 429s on the nightly sync.
+[00:00:44] Priya: Okay, we decided to batch the sync into 500-record pages. Action item: Marcus to add retry with backoff to the sync job.
+[00:00:56] Dana: Do we have a date for the customer demo?
+[00:01:01] Priya: Let's go with Tuesday. I will book the room and send the invite tomorrow.
+[00:01:10] Marcus: Sounds good.
+[00:01:13] Priya: Thanks all, see you next week.
