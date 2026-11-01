@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from pathlib import Path
 
 from .actions import extract_action_items
@@ -50,12 +51,15 @@ KPIS = {
 
 class Store:
     def __init__(self, path: str | Path = ":memory:"):
-        self.db = sqlite3.connect(str(path))
+        # check_same_thread=False + a lock lets the API's worker threads share one connection safely.
+        self.db = sqlite3.connect(str(path), check_same_thread=False)
+        self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
         self.db.executescript(SCHEMA)
+        self.lock = threading.RLock()
 
     def save_meeting(self, title: str, held_on: str, utterances: list[Utterance], team: str = "default") -> int:
-        with self.db:
+        with self.lock, self.db:
             cur = self.db.execute(
                 "INSERT INTO meetings (title, held_on, team) VALUES (?, ?, ?)", (title, held_on, team)
             )
@@ -71,10 +75,65 @@ class Store:
         return mid
 
     def complete(self, item_id: int) -> None:
-        with self.db:
-            self.db.execute("UPDATE action_items SET status = 'done' WHERE id = ?", (item_id,))
+        self.update_item(item_id, status="done")
+
+    # --- read/update helpers used by the API -------------------------------
+    def _rows(self, sql: str, params: tuple = ()) -> list[dict]:
+        with self.lock:
+            return [dict(r) for r in self.db.execute(sql, params).fetchall()]
+
+    def list_meetings(self, team: str | None = None) -> list[dict]:
+        sql = """SELECT m.id, m.title, m.held_on, m.team, COUNT(a.id) AS items,
+                        COALESCE(SUM(a.status = 'open'), 0) AS open_items
+                 FROM meetings m LEFT JOIN action_items a ON a.meeting_id = m.id"""
+        params: tuple = ()
+        if team is not None:
+            sql += " WHERE m.team = ?"
+            params = (team,)
+        return self._rows(sql + " GROUP BY m.id ORDER BY m.held_on, m.id", params)
+
+    def get_meeting(self, meeting_id: int) -> dict | None:
+        rows = self._rows("SELECT id, title, held_on, team FROM meetings WHERE id = ?", (meeting_id,))
+        return rows[0] if rows else None
+
+    def utterances(self, meeting_id: int) -> list[Utterance]:
+        rows = self._rows(
+            "SELECT speaker, text, start_s, end_s FROM utterances WHERE meeting_id = ? ORDER BY start_s, id",
+            (meeting_id,),
+        )
+        return [Utterance(r["speaker"], r["text"], r["start_s"], r["end_s"]) for r in rows]
+
+    def items(self, meeting_id: int, status: str | None = None) -> list[dict]:
+        sql = "SELECT id, meeting_id, owner, task, due, evidence, status FROM action_items WHERE meeting_id = ?"
+        params: tuple = (meeting_id,)
+        if status is not None:
+            sql += " AND status = ?"
+            params += (status,)
+        return self._rows(sql + " ORDER BY id", params)
+
+    def get_item(self, item_id: int) -> dict | None:
+        rows = self._rows(
+            "SELECT id, meeting_id, owner, task, due, evidence, status FROM action_items WHERE id = ?", (item_id,)
+        )
+        return rows[0] if rows else None
+
+    _EDITABLE = ("status", "owner", "task", "due")
+
+    def update_item(self, item_id: int, **changes) -> dict | None:
+        """Update whitelisted columns of one action item; returns the new row or None if missing."""
+        bad = set(changes) - set(self._EDITABLE)
+        if bad:
+            raise ValueError(f"not editable: {sorted(bad)}")
+        if changes.get("status") not in (None, "open", "done"):
+            raise ValueError("status must be 'open' or 'done'")
+        with self.lock, self.db:
+            if changes:
+                cols = [c for c in self._EDITABLE if c in changes]  # fixed column names, values bound
+                self.db.execute(
+                    f"UPDATE action_items SET {', '.join(c + ' = ?' for c in cols)} WHERE id = ?",
+                    (*[changes[c] for c in cols], item_id),
+                )
+        return self.get_item(item_id)
 
     def kpi(self, name: str) -> list[dict]:
-        cur = self.db.execute(KPIS[name])
-        cols = [c[0] for c in cur.description]
-        return [dict(zip(cols, row)) for row in cur.fetchall()]
+        return self._rows(KPIS[name])
