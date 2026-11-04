@@ -2,20 +2,23 @@
 
 Run locally:   uvicorn meetingmind.api:app --reload   (docs at /docs)
 Docker:        docker build -t meetingmind . && docker run -p 8000:8000 meetingmind
+Live:          WebSocket /ws/live streams transcript chunks in and action items out (see stream.py)
 """
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import date
 from typing import Literal, Optional
 
-from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, Field, ValidationError
 
 from . import __version__
 from .analytics import analyze
 from .store import KPIS, Store
+from .stream import DEFAULT_PAUSE_S, StreamError, StreamSession
 from .transcript import parse_transcript
 
 MAX_TRANSCRIPT_CHARS = 200_000
@@ -40,6 +43,14 @@ class ItemOut(BaseModel):
     due: Optional[str]
     evidence: str
     status: Literal["open", "done"]
+
+
+class MeetingMeta(BaseModel):
+    """Sent with {"type": "end", "save": {...}} to store a live meeting when it ends."""
+
+    title: str = Field(min_length=1, max_length=200)
+    held_on: date
+    team: str = Field(default="default", min_length=1, max_length=80)
 
 
 class MeetingOut(BaseModel):
@@ -131,6 +142,62 @@ def create_app(db_path: str | None = None) -> FastAPI:
         if name not in KPIS:
             raise HTTPException(404, f"unknown KPI '{name}'; see GET /kpis")
         return store.kpi(name)
+
+    @app.websocket("/ws/live")
+    async def live(ws: WebSocket, pause_s: float = DEFAULT_PAUSE_S) -> None:
+        """Live meeting notes over a WebSocket.
+
+        Client sends JSON messages:
+          {"type": "chunk", "text": "I'll send the deck", "speaker": "Dana", "t": 12.5}
+              (speaker and t are optional; "Dana: text" or "[00:00:12] Dana: text" lines work too,
+               and a plain-text frame is treated as a chunk)
+          {"type": "end", "save": {"title": "...", "held_on": "2026-11-03", "team": "data"}}
+              (save is optional)
+        Server sends: ready, turn, action_item, item_retracted, error, and a final summary
+        (with meeting_id when saved), then closes.
+        """
+        await ws.accept()
+        session = StreamSession(pause_s=min(max(pause_s, 0.5), 60.0))
+        await ws.send_json({"type": "ready", "pause_s": session.pause_s})
+        try:
+            while True:
+                raw = await ws.receive_text()
+                try:
+                    msg = json.loads(raw) if raw.lstrip().startswith("{") else {"type": "chunk", "text": raw}
+                except json.JSONDecodeError:
+                    await ws.send_json({"type": "error", "detail": "invalid JSON"})
+                    continue
+                kind = msg.get("type", "chunk") if isinstance(msg, dict) else None
+                if kind == "chunk":
+                    try:
+                        events = session.push(msg.get("text"), speaker=msg.get("speaker"), t=msg.get("t"))
+                    except StreamError as exc:
+                        await ws.send_json({"type": "error", "detail": str(exc)})
+                        continue
+                    for event in events:
+                        await ws.send_json(event)
+                elif kind == "end":
+                    meta = None
+                    if msg.get("save") is not None:
+                        try:
+                            meta = MeetingMeta.model_validate(msg["save"])
+                        except ValidationError as exc:
+                            await ws.send_json({"type": "error", "detail": exc.errors(include_url=False)[0]["msg"]})
+                            continue
+                    events = session.finish()
+                    summary = events[-1]
+                    if meta is not None and session.utterances:
+                        summary["meeting_id"] = store.save_meeting(
+                            meta.title, meta.held_on.isoformat(), session.utterances, team=meta.team
+                        )
+                    for event in events:
+                        await ws.send_json(event)
+                    await ws.close()
+                    return
+                else:
+                    await ws.send_json({"type": "error", "detail": "type must be 'chunk' or 'end'"})
+        except WebSocketDisconnect:
+            return  # client left mid-meeting; nothing was saved
 
     return app
 

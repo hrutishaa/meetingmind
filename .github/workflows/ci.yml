@@ -42,5 +42,10 @@ jobs:
             | python3 -c 'import json,sys; d=json.load(sys.stdin); assert len(d["action_items"]) == 5, d; print("items:", len(d["action_items"]))'
           curl -sf -X PATCH localhost:8000/items/1 -H 'content-type: application/json' -d '{"status":"done"}'
           curl -sf localhost:8000/kpis/completion_rate_by_team | grep -q '"done_pct":20.0'
+      - name: Smoke test live streaming over WebSocket
+        run: |
+          pip install websockets
+          python3 scripts/live_client.py samples/weekly_sync.txt --words 3 --save "Live sync" --team data --expect-items 5
+          curl -sf localhost:8000/meetings | grep -q '"title":"Live sync"'
       - if: always()
         run: docker logs mm

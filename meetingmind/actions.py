@@ -7,6 +7,7 @@ can check it, and so LLM output can be grounded against the same transcript.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 
 from .transcript import Utterance
@@ -59,8 +60,13 @@ def find_due(text: str) -> str | None:
     return (m.group(1) or m.group(2)).strip().lower()
 
 
-def extract_action_items(utterances: list[Utterance]) -> list[ActionItem]:
-    speakers = {u.speaker.split()[0].lower(): u.speaker for u in utterances}
+def extract_action_items(
+    utterances: list[Utterance], known_speakers: Iterable[str] = ()
+) -> list[ActionItem]:
+    """Extract action items. `known_speakers` lets a live stream resolve "Bob, can you ..."
+    for people who already spoke in earlier chunks that are not in `utterances`."""
+    speakers = {s.split()[0].lower(): s for s in known_speakers if s.strip()}
+    speakers.update({u.speaker.split()[0].lower(): u.speaker for u in utterances})
     items: list[ActionItem] = []
     seen: set[tuple[str, str]] = set()
     for u in utterances:

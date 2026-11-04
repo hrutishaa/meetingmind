@@ -13,7 +13,7 @@ Open the [live demo](https://hrutishaa.github.io/meetingmind/), click **Load sam
 ```bash
 pip install -e ".[dev]"
 python -m meetingmind analyze samples/weekly_sync.txt   # JSON: stats + action items
-python -m pytest -q                                     # 32 tests
+python -m pytest -q                                     # 52 tests
 ```
 
 From the sample 75-second sync, it finds 5 action items across 3 owners, for example:
@@ -53,6 +53,32 @@ curl localhost:8000/kpis/completion_rate_by_team
 
 Design notes: inputs are validated by Pydantic (bad dates, empty transcripts and unknown statuses return 422), SQL values are always bound parameters, `PATCH` only touches a fixed column allowlist, and CI builds the Docker image and smoke-tests it end to end.
 
+## Live streaming (WebSocket)
+
+`/ws/live` takes transcript chunks while the meeting is happening and sends action items back as soon as the sentence that contains them is finished, so the notes build up during the call instead of after it.
+
+```bash
+uvicorn meetingmind.api:app                    # or the Docker image
+pip install websockets
+python scripts/live_client.py samples/weekly_sync.txt --save "Weekly sync" --team data
+```
+
+```text
+ITEM: Marcus: Rerun the cohort query with the fixed timezone [due friday]
+ITEM: Dana: Draft the FAQ for the support team [due next week]
+ITEM: Marcus: Add retry with backoff to the sync job
+ITEM: Priya: Book the room and send the invite [due tomorrow]
+ITEM (late): Dana: Send the customer the updated CSV export spec
+SUMMARY: 10 turns, 5 items, meeting_id=1
+```
+
+| You send | You get back |
+|---|---|
+| `{"type":"chunk","text":"I'll send the","speaker":"Ana","t":12.5}` (speaker and `t` optional; `Name: text` lines and plain-text frames also work) | `action_item` events as sentences complete, and a `turn` event each time a speaker turn ends |
+| `{"type":"end","save":{"title":"...","held_on":"2026-11-03","team":"data"}}` (`save` optional) | Any `late` items, a `summary` with stats and the final item list (plus `meeting_id` if saved), then the socket closes |
+
+How turns are detected: a different speaker closes the open turn, a pause of `pause_s` seconds (default 2, set with `/ws/live?pause_s=`) closes it too, and a chunk without a speaker continues the current one, like speech-to-text partials. Some items need context that only arrives later, such as "Dana, can you send the spec?" said before Dana has spoken, so when the stream ends MeetingMind runs the full extractor once more and sends those as `late` (and retracts any live guess that changed). The tests check that the final list always equals the batch result for the same transcript, even when it is streamed three words at a time. Bad frames get an `error` event and the stream stays open; chunk and session sizes are capped.
+
 ## How it works
 
 | Module | What it does |
@@ -61,7 +87,8 @@ Design notes: inputs are validated by Pydantic (bad dates, empty transcripts and
 | `meetingmind/actions.py` | Finds commitments ("I'll…"), assignments ("Dana, can you…", "Marcus to…") and explicit "Action item:" lines, plus due dates. Never invents an owner who wasn't in the meeting, and keeps the verbatim sentence as evidence. |
 | `meetingmind/analytics.py` | Talk time and share per speaker, a balance score (1 − normalized Gini), questions, interruptions (overlapping turns), decisions. |
 | `meetingmind/store.py` | SQLite schema (meetings, utterances, action_items) and named KPI queries: open items by owner, completion rate by team, average meeting length, talk share, items per meeting. |
-| `meetingmind/api.py` | FastAPI app: create meetings, list and update action items, read KPIs; OpenAPI docs at `/docs`. |
+| `meetingmind/api.py` | FastAPI app: create meetings, list and update action items, read KPIs; OpenAPI docs at `/docs`; `/ws/live` WebSocket. |
+| `meetingmind/stream.py` | Live session: speaker turn detection, incremental action items, late items and retractions at the end of the stream. |
 | `meetingmind/llm.py` | Optional LLM extraction with any `complete(prompt) -> str` client. Output is **grounded**: an item is kept only if its owner is a real participant and its evidence quote appears in the transcript; otherwise it falls back to the rule engine. |
 
 ### Why rules first, LLM second?
@@ -71,4 +98,4 @@ Rules are free, instant, deterministic and easy to test, so they're the baseline
 The browser demo (`docs/index.html`) is a JavaScript port of the same logic. CI runs `scripts/demo_parity.js` to check that the demo and the Python package extract identical action items from the sample.
 
 ## Roadmap
-Streaming WebSocket ingestion, BYO-key LLM mode with an eval set, a cross-meeting KPI dashboard, and Slack/Linear/Jira export. See [ROADMAP.md](ROADMAP.md).
+BYO-key LLM mode with an eval set, a cross-meeting KPI dashboard, and Slack/Linear/Jira export. See [ROADMAP.md](ROADMAP.md).
