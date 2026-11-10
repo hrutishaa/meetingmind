@@ -12,4 +12,4 @@ __all__ = [
     "extract_action_items",
     "parse_transcript",
 ]
-__version__ = "0.3.0"
+__version__ = "0.4.0"

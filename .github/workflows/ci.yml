@@ -16,6 +16,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install pytest fastapi httpx
       - run: python -m pytest -q
+      - name: Eval regression gate (rule baseline on the golden set)
+        run: python -m meetingmind eval --min-f1 0.75 --min-precision 0.7
   demo-parity:
     runs-on: ubuntu-latest
     steps:

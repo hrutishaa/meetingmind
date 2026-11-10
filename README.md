@@ -13,7 +13,8 @@ Open the [live demo](https://hrutishaa.github.io/meetingmind/), click **Load sam
 ```bash
 pip install -e ".[dev]"
 python -m meetingmind analyze samples/weekly_sync.txt   # JSON: stats + action items
-python -m pytest -q                                     # 52 tests
+python -m meetingmind eval                              # precision/recall on 10 labeled meetings
+python -m pytest -q                                     # 69 tests
 ```
 
 From the sample 75-second sync, it finds 5 action items across 3 owners, for example:
@@ -79,6 +80,30 @@ SUMMARY: 10 turns, 5 items, meeting_id=1
 
 How turns are detected: a different speaker closes the open turn, a pause of `pause_s` seconds (default 2, set with `/ws/live?pause_s=`) closes it too, and a chunk without a speaker continues the current one, like speech-to-text partials. Some items need context that only arrives later, such as "Dana, can you send the spec?" said before Dana has spoken, so when the stream ends MeetingMind runs the full extractor once more and sends those as `late` (and retracts any live guess that changed). The tests check that the final list always equals the batch result for the same transcript, even when it is streamed three words at a time. Bad frames get an `error` event and the stream stays open; chunk and session sizes are capped.
 
+## LLM mode (bring your own key) and evals
+
+MeetingMind works offline with rules, and can also use your own LLM through any OpenAI-compatible API: OpenAI, Groq, Together, OpenRouter, or a local Ollama or vLLM server. No SDK is needed; the adapter uses the standard library.
+
+```bash
+export MEETINGMIND_LLM_API_KEY=sk-...                     # optional for local servers
+export MEETINGMIND_LLM_BASE_URL=https://api.openai.com/v1 # or http://localhost:11434/v1 for Ollama
+export MEETINGMIND_LLM_MODEL=gpt-4o-mini
+python -m meetingmind analyze samples/weekly_sync.txt --llm
+python -m meetingmind eval --llm                          # rules vs. your model, same golden set
+```
+
+The LLM only proposes items. Each one is kept only if its owner is a real participant and its evidence quote appears word for word in the transcript, so a made-up task or owner never reaches the team. Rate limits and 5xx errors are retried with exponential backoff and jitter (honoring `Retry-After`); auth errors fail fast; any provider failure falls back to the rule engine so a meeting is never lost. The key is read from the environment and never logged or included in errors.
+
+**Evaluation.** [`evals/golden.jsonl`](evals/golden.jsonl) holds 10 hand-labeled meetings (standups, a customer kickoff, a WebVTT design review, a data review, and meetings with no action items, hedges like "I'll be honest", and questions that are not assignments). A predicted item counts as correct when the owner matches and the task has at least 50% content-word overlap with the label; matching is one-to-one, so duplicates count as false positives, and empty cases score cleanly instead of dividing by zero.
+
+Rule baseline today:
+
+| Extractor | Precision | Recall | F1 | Due accuracy | TP | FP | FN |
+|---|---|---|---|---|---|---|---|
+| rules | 0.74 | 0.77 | 0.76 | 0.94 | 17 | 6 | 5 |
+
+The misses are what rules can't do: pronouns and implicit volunteering ("I can take that", "Leave that with me"), follow-ups without a trigger phrase ("Ben, also write tests..."), and polite phrases that look like commitments ("Let me know if anything changes"). That's the gap LLM mode is meant to close, and `eval --llm` measures whether it does on your model. CI runs the eval on every push and fails if the rule baseline drops below F1 0.75 or precision 0.70.
+
 ## How it works
 
 | Module | What it does |
@@ -89,6 +114,8 @@ How turns are detected: a different speaker closes the open turn, a pause of `pa
 | `meetingmind/store.py` | SQLite schema (meetings, utterances, action_items) and named KPI queries: open items by owner, completion rate by team, average meeting length, talk share, items per meeting. |
 | `meetingmind/api.py` | FastAPI app: create meetings, list and update action items, read KPIs; OpenAPI docs at `/docs`; `/ws/live` WebSocket. |
 | `meetingmind/stream.py` | Live session: speaker turn detection, incremental action items, late items and retractions at the end of the stream. |
+| `meetingmind/providers.py` | Bring-your-own-key adapter for OpenAI-compatible chat APIs with retries, backoff and safe errors. |
+| `meetingmind/evaluate.py` | Golden-set scoring: one-to-one matching, precision, recall, F1, due-date accuracy, markdown report. |
 | `meetingmind/llm.py` | Optional LLM extraction with any `complete(prompt) -> str` client. Output is **grounded**: an item is kept only if its owner is a real participant and its evidence quote appears in the transcript; otherwise it falls back to the rule engine. |
 
 ### Why rules first, LLM second?
@@ -98,4 +125,4 @@ Rules are free, instant, deterministic and easy to test, so they're the baseline
 The browser demo (`docs/index.html`) is a JavaScript port of the same logic. CI runs `scripts/demo_parity.js` to check that the demo and the Python package extract identical action items from the sample.
 
 ## Roadmap
-BYO-key LLM mode with an eval set, a cross-meeting KPI dashboard, and Slack/Linear/Jira export. See [ROADMAP.md](ROADMAP.md).
+A cross-meeting KPI dashboard, and Slack/Linear/Jira export. See [ROADMAP.md](ROADMAP.md).
