@@ -7,6 +7,7 @@ import threading
 from pathlib import Path
 
 from .actions import extract_action_items
+from .dues import resolve_due
 from .transcript import Utterance
 
 SCHEMA = """
@@ -19,7 +20,7 @@ CREATE TABLE IF NOT EXISTS utterances (
 );
 CREATE TABLE IF NOT EXISTS action_items (
   id INTEGER PRIMARY KEY, meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
-  owner TEXT NOT NULL, task TEXT NOT NULL, due TEXT, evidence TEXT NOT NULL,
+  owner TEXT NOT NULL, task TEXT NOT NULL, due TEXT, due_on TEXT, evidence TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done'))
 );
 CREATE INDEX IF NOT EXISTS ix_utt_meeting ON utterances(meeting_id);
@@ -49,6 +50,10 @@ KPIS = {
 }
 
 
+def _iso(d) -> str | None:
+    return d.isoformat() if d else None
+
+
 class Store:
     def __init__(self, path: str | Path = ":memory:"):
         # check_same_thread=False + a lock lets the API's worker threads share one connection safely.
@@ -57,6 +62,22 @@ class Store:
         self.db.execute("PRAGMA foreign_keys = ON")
         self.db.executescript(SCHEMA)
         self.lock = threading.RLock()
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """v0.5.0 added action_items.due_on (resolved calendar date); upgrade older databases in place."""
+        cols = {r["name"] for r in self.db.execute("PRAGMA table_info(action_items)")}
+        with self.lock, self.db:
+            if "due_on" not in cols:
+                self.db.execute("ALTER TABLE action_items ADD COLUMN due_on TEXT")
+            rows = self.db.execute(
+                """SELECT a.id, a.due, m.held_on FROM action_items a JOIN meetings m ON m.id = a.meeting_id
+                   WHERE a.due IS NOT NULL AND a.due_on IS NULL"""
+            ).fetchall()
+            self.db.executemany(
+                "UPDATE action_items SET due_on = ? WHERE id = ?",
+                [(_iso(resolve_due(r["due"], r["held_on"])), r["id"]) for r in rows],
+            )
 
     def save_meeting(self, title: str, held_on: str, utterances: list[Utterance], team: str = "default") -> int:
         with self.lock, self.db:
@@ -69,8 +90,11 @@ class Store:
                 [(mid, u.speaker, u.text, u.start, u.end) for u in utterances],
             )
             self.db.executemany(
-                "INSERT INTO action_items (meeting_id, owner, task, due, evidence) VALUES (?, ?, ?, ?, ?)",
-                [(mid, i.owner, i.task, i.due, i.evidence) for i in extract_action_items(utterances)],
+                "INSERT INTO action_items (meeting_id, owner, task, due, due_on, evidence) VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    (mid, i.owner, i.task, i.due, _iso(resolve_due(i.due, held_on)), i.evidence)
+                    for i in extract_action_items(utterances)
+                ],
             )
         return mid
 
@@ -104,7 +128,7 @@ class Store:
         return [Utterance(r["speaker"], r["text"], r["start_s"], r["end_s"]) for r in rows]
 
     def items(self, meeting_id: int, status: str | None = None) -> list[dict]:
-        sql = "SELECT id, meeting_id, owner, task, due, evidence, status FROM action_items WHERE meeting_id = ?"
+        sql = "SELECT id, meeting_id, owner, task, due, due_on, evidence, status FROM action_items WHERE meeting_id = ?"
         params: tuple = (meeting_id,)
         if status is not None:
             sql += " AND status = ?"
@@ -113,7 +137,7 @@ class Store:
 
     def get_item(self, item_id: int) -> dict | None:
         rows = self._rows(
-            "SELECT id, meeting_id, owner, task, due, evidence, status FROM action_items WHERE id = ?", (item_id,)
+            "SELECT id, meeting_id, owner, task, due, due_on, evidence, status FROM action_items WHERE id = ?", (item_id,)
         )
         return rows[0] if rows else None
 
@@ -127,8 +151,15 @@ class Store:
         if changes.get("status") not in (None, "open", "done"):
             raise ValueError("status must be 'open' or 'done'")
         with self.lock, self.db:
+            if "due" in changes:  # keep the resolved date in sync with the spoken phrase
+                held = self.db.execute(
+                    "SELECT m.held_on FROM action_items a JOIN meetings m ON m.id = a.meeting_id WHERE a.id = ?",
+                    (item_id,),
+                ).fetchone()
+                if held is not None:
+                    changes["due_on"] = _iso(resolve_due(changes["due"], held["held_on"]))
             if changes:
-                cols = [c for c in self._EDITABLE if c in changes]  # fixed column names, values bound
+                cols = [c for c in (*self._EDITABLE, "due_on") if c in changes]  # fixed column names, values bound
                 self.db.execute(
                     f"UPDATE action_items SET {', '.join(c + ' = ?' for c in cols)} WHERE id = ?",
                     (*[changes[c] for c in cols], item_id),

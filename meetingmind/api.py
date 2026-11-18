@@ -2,6 +2,7 @@
 
 Run locally:   uvicorn meetingmind.api:app --reload   (docs at /docs)
 Docker:        docker build -t meetingmind . && docker run -p 8000:8000 meetingmind
+Dashboard:     GET /dashboard?team=&as_of= for cross-meeting KPIs (see dashboard.py)
 Live:          WebSocket /ws/live streams transcript chunks in and action items out (see stream.py)
 """
 
@@ -17,6 +18,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from . import __version__
 from .analytics import analyze
+from .dashboard import build_dashboard
 from .store import KPIS, Store
 from .stream import DEFAULT_PAUSE_S, StreamError, StreamSession
 from .transcript import parse_transcript
@@ -41,6 +43,7 @@ class ItemOut(BaseModel):
     owner: str
     task: str
     due: Optional[str]
+    due_on: Optional[str] = Field(None, description="The due phrase resolved to a date from the meeting day (YYYY-MM-DD).")
     evidence: str
     status: Literal["open", "done"]
 
@@ -142,6 +145,13 @@ def create_app(db_path: str | None = None) -> FastAPI:
         if name not in KPIS:
             raise HTTPException(404, f"unknown KPI '{name}'; see GET /kpis")
         return store.kpi(name)
+
+    @app.get("/dashboard")
+    def dashboard(team: Optional[str] = None, as_of: Optional[date] = None) -> dict:
+        """Cross-meeting KPIs: summary, owner load (open/overdue/due soon), team meeting load,
+        weekly talk-balance trend, per-meeting trend and the oldest overdue items.
+        `as_of` (default today) decides what counts as overdue."""
+        return build_dashboard(store, as_of=as_of, team=team)
 
     @app.websocket("/ws/live")
     async def live(ws: WebSocket, pause_s: float = DEFAULT_PAUSE_S) -> None:

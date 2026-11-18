@@ -8,13 +8,14 @@ It's a note-taking tool for meetings you run: paste a transcript, upload WebVTT 
 
 ## Try it
 
-Open the [live demo](https://hrutishaa.github.io/meetingmind/), click **Load sample**, or press **🎙 Live transcribe** (Chrome/Edge) and talk. Everything runs in your browser.
+Open the [live demo](https://hrutishaa.github.io/meetingmind/), click **Load sample**, or press **🎙 Live transcribe** (Chrome/Edge) and talk. Scroll down for the **team dashboard** across a sample team's meetings, and add your own transcript to it. Everything runs in your browser.
 
 ```bash
 pip install -e ".[dev]"
 python -m meetingmind analyze samples/weekly_sync.txt   # JSON: stats + action items
 python -m meetingmind eval                              # precision/recall on 10 labeled meetings
-python -m pytest -q                                     # 69 tests
+python -m meetingmind dashboard --sample                # cross-meeting KPIs for a sample team
+python -m pytest -q                                     # 109 tests
 ```
 
 From the sample 75-second sync, it finds 5 action items across 3 owners, for example:
@@ -43,6 +44,7 @@ docker build -t meetingmind . && docker run -p 8000:8000 -v mm:/data meetingmind
 | `GET /meetings/{id}/items?status=open` | Action items for one meeting, optionally filtered by status. |
 | `GET /meetings/{id}/stats` | Talk share, balance score, questions, interruptions, decisions. |
 | `PATCH /items/{id}` | Partial update: mark done, reassign the owner, fix the task or due date. Only listed fields can change. |
+| `GET /dashboard?team=&as_of=` | Cross-meeting team dashboard: follow-through, owner load, overdue items, meeting load, talk balance trend (see below). |
 | `GET /kpis`, `GET /kpis/{name}` | The named SQL KPIs (open items by owner, completion rate by team, and more). |
 
 ```bash
@@ -53,6 +55,44 @@ curl localhost:8000/kpis/completion_rate_by_team
 ```
 
 Design notes: inputs are validated by Pydantic (bad dates, empty transcripts and unknown statuses return 422), SQL values are always bound parameters, `PATCH` only touches a fixed column allowlist, and CI builds the Docker image and smoke-tests it end to end.
+
+## Team dashboard (cross-meeting KPIs)
+
+One meeting's notes are useful; the pattern across meetings is what a lead or PM actually manages. `GET /dashboard`, `meetingmind dashboard`, and section 4 of the live demo answer: are action items getting done, who is overloaded or late, how much time each team spends in meetings, and whether meetings are getting more or less balanced week to week.
+
+```bash
+python -m meetingmind dashboard --sample                 # bundled fictional team, as of 2026-11-13
+python -m meetingmind dashboard --sample --team web --json
+MEETINGMIND_DB=mm.db uvicorn meetingmind.api:app          # meetings you POST are stored in mm.db
+python -m meetingmind dashboard --db mm.db                # same KPIs over your own meetings, as of today
+curl 'localhost:8000/dashboard?team=data&as_of=2026-11-13'
+```
+
+```text
+MeetingMind dashboard as of 2026-11-13 · all teams
+8 meetings · 28 action items · 10 open · 18 done (64.3%) · 3 overdue · 2 due in 7 days · 5 open with no due date
+
+Owner           open  overdue  due soon  done  done %
+Bo                 3        2         0     1   25.0%
+Dana               2        1         0     3   60.0%
+...
+Overdue:
+  Bo: Build the invoice table component (due 2026-11-06, 7d late, from Sprint planning)
+```
+
+(Numbers above are from the fictional sample team in [`meetingmind/data/team_meetings.json`](meetingmind/data/team_meetings.json), not real usage.)
+
+| Panel | How it's computed |
+|---|---|
+| Summary | Meetings, action items, open/done, completion %, overdue, due in the next 7 days, open with no due date. |
+| Owner load | Per owner: open, overdue, due soon, done, completion %; sorted by open, then overdue. |
+| Meeting load by team | Meetings, total and average minutes (first to last utterance), items, overdue, completion %. |
+| Talk balance trend | Per meeting and per ISO week (Monday start): the same balance score as the single-meeting report, averaged per week. |
+| Overdue | Oldest first, with the original phrase and the date it resolved to. |
+
+How "overdue" works: spoken due phrases ("by Friday", "tomorrow", "next week", "end of month", "Nov 20", "11/20") are resolved to a calendar date **relative to the day the meeting was held** and stored in `action_items.due_on` (`meetingmind/dues.py`). An item is overdue when it is still open and that date is before `as_of`. Phrases that can't be pinned to a date ("soon", "asap") stay undated and are counted as "open with no due date" instead of being guessed. `PATCH /items/{id}` with a new `due` re-resolves the date, and databases created by v0.4.0 get the new column and a backfill automatically on startup.
+
+All KPIs are SQL over the SQLite store (`DASHBOARD_SQL` in `meetingmind/dashboard.py`, one CTE for the team filter, bound parameters only). The demo page recomputes them in JavaScript for the static site, and CI checks that the page and `meetingmind dashboard --sample --json` produce identical output for all teams and each team.
 
 ## Live streaming (WebSocket)
 
@@ -111,7 +151,9 @@ The misses are what rules can't do: pronouns and implicit volunteering ("I can t
 | `meetingmind/transcript.py` | Parses `[00:01:23] Name: text`, `Name: text` and WebVTT `<v Name>` cues into timed utterances; estimates timing when there are no timestamps. |
 | `meetingmind/actions.py` | Finds commitments ("I'll…"), assignments ("Dana, can you…", "Marcus to…") and explicit "Action item:" lines, plus due dates. Never invents an owner who wasn't in the meeting, and keeps the verbatim sentence as evidence. |
 | `meetingmind/analytics.py` | Talk time and share per speaker, a balance score (1 − normalized Gini), questions, interruptions (overlapping turns), decisions. |
-| `meetingmind/store.py` | SQLite schema (meetings, utterances, action_items) and named KPI queries: open items by owner, completion rate by team, average meeting length, talk share, items per meeting. |
+| `meetingmind/store.py` | SQLite schema (meetings, utterances, action_items) (with `due_on`, the resolved due date) and named KPI queries: open items by owner, completion rate by team, average meeting length, talk share, items per meeting. |
+| `meetingmind/dashboard.py` | Cross-meeting dashboard: named SQL queries (summary, owner load, team meeting load, per-meeting trend, overdue), weekly talk-balance trend, text report, bundled sample team. |
+| `meetingmind/dues.py` | Resolves spoken due phrases to calendar dates relative to the meeting day; unknown phrases stay undated. |
 | `meetingmind/api.py` | FastAPI app: create meetings, list and update action items, read KPIs; OpenAPI docs at `/docs`; `/ws/live` WebSocket. |
 | `meetingmind/stream.py` | Live session: speaker turn detection, incremental action items, late items and retractions at the end of the stream. |
 | `meetingmind/providers.py` | Bring-your-own-key adapter for OpenAI-compatible chat APIs with retries, backoff and safe errors. |
@@ -122,7 +164,7 @@ The misses are what rules can't do: pronouns and implicit volunteering ("I can t
 Rules are free, instant, deterministic and easy to test, so they're the baseline and the fallback. The LLM path adds recall on messy speech, but model output is checked against the transcript before anyone sees it, which catches hallucinated tasks and owners.
 
 ### Demo parity
-The browser demo (`docs/index.html`) is a JavaScript port of the same logic. CI runs `scripts/demo_parity.js` to check that the demo and the Python package extract identical action items from the sample.
+The browser demo (`docs/index.html`) is a JavaScript port of the same logic. CI runs `scripts/demo_parity.js` to check that the demo and the Python package extract identical action items from the sample and produce an identical team dashboard for the sample team.
 
 ## Roadmap
-A cross-meeting KPI dashboard, and Slack/Linear/Jira export. See [ROADMAP.md](ROADMAP.md).
+Next: export action items to Slack / Linear / Jira / CSV and a follow-up email draft for the meeting owner. See [ROADMAP.md](ROADMAP.md).

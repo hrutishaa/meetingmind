@@ -1,0 +1,86 @@
+{
+ "about": "Fictional sample team used by `meetingmind dashboard --sample` and the live demo. Items listed under done (by index in each meeting's extracted action items) are marked done.",
+ "as_of": "2026-11-13",
+ "meetings": [
+  {
+   "title": "Weekly sync",
+   "held_on": "2026-10-26",
+   "team": "data",
+   "transcript": "[00:00:00] Priya: Morning everyone. Quick weekly sync on the onboarding dashboard. Where are we on the churn numbers?\n[00:00:09] Marcus: The query is done but the numbers look off for October. I'll rerun the cohort query with the fixed timezone by Friday.\n[00:00:21] Priya: Great. Dana, can you send the customer the updated CSV export spec?\n[00:00:27] Dana: Yes. I can also draft the FAQ for the support team by next week.\n[00:00:35] Marcus: One concern is the API rate limit. We keep hitting 429s on the nightly sync.\n[00:00:44] Priya: Okay, we decided to batch the sync into 500-record pages. Action item: Marcus to add retry with backoff to the sync job.\n[00:00:56] Dana: Do we have a date for the customer demo?\n[00:01:01] Priya: Let's go with Tuesday. I will book the room and send the invite tomorrow.\n[00:01:10] Marcus: Sounds good.\n[00:01:13] Priya: Thanks all, see you next week.\n",
+   "done": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ]
+  },
+  {
+   "title": "Web standup",
+   "held_on": "2026-10-27",
+   "team": "web",
+   "transcript": "[00:00:00] Ann: Yesterday I shipped the signup form. Today I'll fix the login redirect bug.\n[00:00:08] Bo: I'm blocked on the staging database. Ann, can you share the staging credentials with me?\n[00:00:16] Ann: Sure, I'll send them after this call.\n[00:00:20] Cara: I will review Bo's pull request by end of day.\n[00:00:26] Bo: Thanks. That's all from me.\n",
+   "done": [
+    0,
+    1,
+    2,
+    3
+   ]
+  },
+  {
+   "title": "Weekly sync",
+   "held_on": "2026-11-02",
+   "team": "data",
+   "transcript": "[00:00:00] Priya: Morning. The churn dashboard went out on Friday and the customer liked it.\n[00:00:10] Marcus: The retry change cut the 429 errors on the nightly sync. I'll write up the incident notes by Wednesday.\n[00:00:24] Priya: Good. Dana, can you check the October cohort numbers against finance by Thursday?\n[00:00:33] Dana: Yes. I'll also update the data dictionary for the new churn fields.\n[00:00:41] Priya: We decided to move the demo to next Tuesday. Action item: Marcus to prepare the demo dataset by next monday.\n[00:00:55] Marcus: Sounds good.\n[00:00:58] Priya: Thanks all.\n",
+   "done": [
+    0,
+    1,
+    3
+   ]
+  },
+  {
+   "title": "Sprint planning",
+   "held_on": "2026-11-03",
+   "team": "web",
+   "transcript": "[00:00:00] Cara: Let's plan the sprint. The big item is the new billing page.\n[00:00:12] Cara: I'll break the billing page into tickets by tomorrow.\n[00:00:18] Bo: I can build the invoice table component by Friday.\n[00:00:26] Cara: Ann, can you add the Stripe webhook handler by next week?\n[00:00:33] Ann: Yes. We should also fix the flaky checkout test.\n[00:00:40] Cara: Agreed. Bo will fix the flaky checkout test.\n[00:00:46] Bo: Okay.\n[00:00:49] Ann: What about the dark mode request?\n[00:00:53] Cara: Let's go with next sprint for dark mode.\n[00:01:00] Cara: Thanks everyone, good planning.\n",
+   "done": [
+    0,
+    2,
+    3
+   ]
+  },
+  {
+   "title": "Customer review",
+   "held_on": "2026-11-05",
+   "team": "data",
+   "transcript": "[00:00:00] Priya: Thanks for joining. The goal today is to review the onboarding metrics with the customer team.\n[00:00:15] Priya: The activation rate chart is the one they asked about most.\n[00:00:24] Marcus: The chart uses the fixed timezone now, so October matches finance.\n[00:00:33] Priya: Great. They also want weekly exports. Dana, can you set up the weekly export job by Nov 12?\n[00:00:45] Dana: Yes, that works.\n[00:00:48] Marcus: I'll add a data freshness check to the export.\n[00:00:55] Priya: Okay, final call: we ship weekly exports first and daily later.\n[00:01:03] Priya: Thanks, that's it.\n",
+   "done": []
+  },
+  {
+   "title": "Weekly sync",
+   "held_on": "2026-11-09",
+   "team": "data",
+   "transcript": "[00:00:00] Priya: Quick sync. Where are we on the weekly export?\n[00:00:06] Dana: It's half done. The schema changed, so I need another day or two.\n[00:00:14] Priya: Okay. Marcus, can you pair with Dana on the export schema by tomorrow?\n[00:00:22] Marcus: Yes. I'll also draft the runbook for the export job by end of week.\n[00:00:31] Priya: I will send the customer a status update today.\n[00:00:37] Dana: Sounds good.\n",
+   "done": [
+    0,
+    2
+   ]
+  },
+  {
+   "title": "Web standup",
+   "held_on": "2026-11-10",
+   "team": "web",
+   "transcript": "[00:00:00] Ann: The webhook handler is done and in review.\n[00:00:05] Bo: The invoice table slipped. I'll finish the invoice table by Thursday.\n[00:00:12] Cara: Okay. I'll ask design for the empty state mockups.\n[00:00:18] Ann: Cara, can you approve my webhook pull request today?\n[00:00:24] Cara: Yes, after lunch.\n[00:00:27] Bo: That's all from me.\n",
+   "done": [
+    2
+   ]
+  },
+  {
+   "title": "Retro",
+   "held_on": "2026-11-12",
+   "team": "web",
+   "transcript": "[00:00:00] Cara: Retro time. What went well?\n[00:00:05] Ann: Webhooks shipped on time and the tests are solid.\n[00:00:12] Bo: The invoice table took longer than planned because the design changed twice.\n[00:00:22] Cara: Agreed, we need the design locked before we start. I'll add a design sign-off step to the ticket template.\n[00:00:35] Bo: I will write down the estimate for each ticket before we start.\n[00:00:42] Ann: I'll pair with Bo on the remaining invoice table work tomorrow.\n[00:00:50] Cara: Thanks all.\n",
+   "done": []
+  }
+ ]
+}

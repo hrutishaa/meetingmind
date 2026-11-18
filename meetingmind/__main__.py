@@ -1,8 +1,9 @@
-"""CLI: python -m meetingmind analyze transcript.txt [--llm] | python -m meetingmind eval [--llm]"""
+"""CLI: python -m meetingmind analyze transcript.txt [--llm] | eval [--llm] | dashboard (--db FILE | --sample)"""
 
 import argparse
 import json
 import sys
+from datetime import date
 from pathlib import Path
 
 from .actions import extract_action_items
@@ -71,6 +72,22 @@ def _eval(args) -> int:
     return 0
 
 
+def _dashboard(args) -> int:
+    from .dashboard import SAMPLE_AS_OF, build_dashboard, load_sample, render_text
+    from .store import Store
+
+    if args.sample:
+        store, as_of = load_sample(), args.as_of or SAMPLE_AS_OF
+    else:
+        if not Path(args.db).is_file():
+            print(f"no database at {args.db} (the API writes one when MEETINGMIND_DB is set)", file=sys.stderr)
+            return 2
+        store, as_of = Store(args.db), args.as_of
+    d = build_dashboard(store, as_of=as_of, team=args.team)
+    print(json.dumps(d, indent=2) if args.json else render_text(d))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="meetingmind")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -82,8 +99,15 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--json", action="store_true")
     e.add_argument("--min-f1", type=float, default=0.0, help="exit 1 if the rule baseline F1 is lower")
     e.add_argument("--min-precision", type=float, default=0.0)
+    d = sub.add_parser("dashboard", help="cross-meeting KPIs: owner load, overdue items, team meeting load, talk balance trend")
+    src = d.add_mutually_exclusive_group(required=True)
+    src.add_argument("--db", help="SQLite file written by the API (MEETINGMIND_DB)")
+    src.add_argument("--sample", action="store_true", help="use the bundled fictional sample team")
+    d.add_argument("--team", help="only this team")
+    d.add_argument("--as-of", type=date.fromisoformat, help="YYYY-MM-DD used for overdue/due-soon (default today)")
+    d.add_argument("--json", action="store_true")
     args = p.parse_args(argv)
-    return _analyze(args) if args.cmd == "analyze" else _eval(args)
+    return {"analyze": _analyze, "eval": _eval, "dashboard": _dashboard}[args.cmd](args)
 
 
 if __name__ == "__main__":
